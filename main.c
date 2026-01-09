@@ -3,29 +3,63 @@
 #include <string.h>
 #include <stdlib.h>
 
+
+
 const char *STANDARD_LOGFILE_NAME = "projectMonitorOut.txt";
 
 
+// Storing current file tracker information
 struct trackerEnum {
-
+    
     char file_to_track[1024];
     char log_file_out[1024];
-
+    
 };
+
+typedef struct trackerEnum FTracker;
+
+
+// prototype declarations
+int checkValidFileIn(int argc, char *argv[], FTracker *newTracker);
+
 
 int main(int argc, char *argv[]) {
 
-    FILE *newFile;
+    /**
+     * Main
+     * 
+     * Arguments:
+     *  -f for new file to watch
+     *  -o for log to output this too // defaults to the standard log out 
+     */
+
 
     char file_to_track[1024];
     int found = 0;
     
-    struct trackerEnum newTracker;
+    FTracker newTracker;
+    FTracker *ntptr = &newTracker;
+
 
     printf("Starting file\n");
     printf("Found %d arguments\n", argc);
 
+    if (checkValidFileIn(argc, argv, ntptr) == 1) {
+        return 1;
+    }
     
+    
+    
+
+    return 0;
+}
+
+
+int checkValidFileIn(int argc, char *argv[], FTracker *newTracker) {
+
+    FILE *newFile;
+    int found = 0;
+
     for (int i = 0 ; i < argc; i++) {
         if (strcmp("-f", argv[i]) == 0) {
             if (i + 1 == argc) {
@@ -33,7 +67,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             printf("Found -f, next arg is %s\n", argv[i+1]);
-            strcpy(newTracker.file_to_track, argv[i+1]);
+            strcpy(newTracker->file_to_track, argv[i+1]);
             found = 1; 
         }
     }
@@ -45,28 +79,21 @@ int main(int argc, char *argv[]) {
 
 
     // checking the file specified on the 
-    if (!(newFile = fopen(newTracker.file_to_track, "r"))) {
+    if (!(newFile = fopen(newTracker->file_to_track, "r"))) {
 
-        printf("Failed to open the file to track : \"%s\". Exiting\n", newTracker.file_to_track);
+        printf("Failed to open the file to track : \"%s\". Exiting\n", newTracker->file_to_track);
 
         // closing the file on exit
-        fclose(newFile);
+        // fclose(newFile);
         return 1;
         
     }
-    
-    
-    /**
-     * Main
-     * 
-     * Arguments:
-     *  -f for new file to watch
-     *  -o for log to output this too // defaults to the standard log out 
-     */
-    
-    
+
+
     // closing the file on exit
     fclose(newFile);
+    
 
-    return 0;
+    return 0; // VALID
+
 }
