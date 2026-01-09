@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "gcc build and compile",
+			"command": "gcc main.c -o build/main && ./build/main",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"detail": "GCC Make and compile the http parser code"
+		},
+	]
+}
