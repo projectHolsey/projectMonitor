@@ -1,0 +1,7 @@
+There's 2 or 3 main parts to this project. 
+
+I want to monitor a file for changes, get the pid of the program that modified it and list the name of this pid
+
+I want to get the contents of this file prior to the change and after the change and give a list of changes to the user
+
+I want to be able to log all of these changes to a file
