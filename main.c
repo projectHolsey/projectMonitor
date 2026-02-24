@@ -11,6 +11,8 @@
 
 #include <sys/inotify.h> // system library to watch the file for changes
 
+#include <libaudit.h>
+#include <sys/select.h>
 
 
 #define BUF_LEN (10 * (sizeof(struct inotify_event) + NAME_MAX + 1))
@@ -174,6 +176,36 @@ int main(int argc, char *argv[]) {
     }
 
 
+    int audit_fd = audit_open();
+    if (audit_fd < 0) {
+        perror("audit_open");
+        return 1;
+    }
+    struct audit_rule_data *rule; // create a new struct with correct memory
+    if (new_audit_rule_data(&rule) < 0) {
+        fprintf(stderr, "Error allocating audit rule data\n");
+        audit_close(fd);
+        return 1;
+    }
+
+    // Add an libaudit watcher to the file we're tracking
+    if (audit_add_watch(rule, ntptr->file_to_track, AUDIT_ALWAYS) < 0 ){
+        perror("audit_add_watch");
+        return 1;
+    }
+
+    /* Set permissions (like -p wa) */
+    audit_update_watch_perms(rule, AUDIT_PERM_READ | AUDIT_PERM_WRITE | AUDIT_PERM_ATTR);
+
+     // install the rule in kernel audit
+    if (audit_add_rule_data(audit_fd, rule, AUDIT_FILTER_EXIT, AUDIT_ALWAYS) < 0) {
+        perror("audit_add_rule_data");
+        printf("errno=%d\n", errno);
+        return 1;
+    }
+
+    
+
      /* Prepare for polling.  */
 
     nfds = 2;
@@ -188,6 +220,12 @@ int main(int argc, char *argv[]) {
 
     printf("Listening for events.\n");
     while (1) {
+
+        // from /sys/select.h library
+        fd_set rfds;                // file descriptor struct
+        FD_ZERO(&rfds);             // clears it
+        FD_SET(audit_fd, &rfds);    // Watches our descriptor
+
         poll_num = poll(fds, nfds, -1);
         if (poll_num == -1) {
             if (errno == EINTR)
@@ -206,15 +244,45 @@ int main(int argc, char *argv[]) {
                     continue;
                 break;
             }
+            
 
             if (fds[1].revents & POLLIN) {
 
                 /* Inotify events are available.  */
 
                 handle_events(fd, wd, argc, argv);
+
+                struct timeval tv = {5, 0};  // 5 seconds
+                // using the libaudit only after we found something from inotify
+                int ret = select(audit_fd + 1, &rfds, NULL, NULL, &tv); 
+                // Select is used instead of while, but there **should** already be something to read if inotify found something
+                    // the &tv is a 5 second timeout, just incase
+                if (ret < 0) {
+                    perror("select");
+                    break;
+                }
+                // Checking if the fil descriptor is ready
+                if (FD_ISSET(audit_fd, &rfds)) {
+                    struct audit_reply rep;
+                    // Getting the reply and printing the message
+                    int len = audit_get_reply(audit_fd, &rep, GET_REPLY_NONBLOCKING, 0);
+                    if (len > 0) {
+                        if (rep.type != AUDIT_EOE &&
+                            rep.type != AUDIT_PROCTITLE &&
+                            rep.type != AUDIT_PATH) {
+                            printf("Audit event: %s\n", rep.message);
+                        }
+                    }
+                }
+
             }
         }
     }
+
+
+    // Cleaning up the libaudit watcher
+    audit_close(audit_fd);
+    free(rule);
     
 
     return 0;

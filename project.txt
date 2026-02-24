@@ -5,3 +5,22 @@ I want to monitor a file for changes, get the pid of the program that modified i
 I want to get the contents of this file prior to the change and after the change and give a list of changes to the user
 
 I want to be able to log all of these changes to a file
+
+---------------------------------
+
+// you'll need to mkae an install script at some point
+
+requires inotify
+
+requires libaudit (auditctl library)
+ - requires being run as root
+ - sudo apt install libaudit-dev
+ - sudo apt install auditd
+
+
+
+ we need to compile this with '-laudit' as a cli argument.
+    - nto a part of libc apparently, so needs to be linked
+
+libaudit.h uses a NETLINK_AUDIT for communication with kernal.
+    - uses ASK featuer of netlink
