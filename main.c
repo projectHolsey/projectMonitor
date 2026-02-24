@@ -181,15 +181,11 @@ int main(int argc, char *argv[]) {
         perror("audit_open");
         return 1;
     }
-    struct audit_rule_data *rule; // create a new struct with correct memory
-    if (new_audit_rule_data(&rule) < 0) {
-        fprintf(stderr, "Error allocating audit rule data\n");
-        audit_close(fd);
-        return 1;
-    }
+    struct audit_rule_data *rule = audit_rule_create_data();
+    printf("size of rule : %d\n", sizeof(*rule));
 
     // Add an libaudit watcher to the file we're tracking
-    if (audit_add_watch(rule, ntptr->file_to_track, AUDIT_ALWAYS) < 0 ){
+    if (audit_add_watch(&rule, ntptr->file_to_track) < 0 ){
         perror("audit_add_watch");
         return 1;
     }
@@ -198,7 +194,7 @@ int main(int argc, char *argv[]) {
     audit_update_watch_perms(rule, AUDIT_PERM_READ | AUDIT_PERM_WRITE | AUDIT_PERM_ATTR);
 
      // install the rule in kernel audit
-    if (audit_add_rule_data(audit_fd, rule, AUDIT_FILTER_EXIT, AUDIT_ALWAYS) < 0) {
+    if (audit_add_rule_data(audit_fd, rule, 8, 2) < 0) {
         perror("audit_add_rule_data");
         printf("errno=%d\n", errno);
         return 1;
@@ -208,7 +204,6 @@ int main(int argc, char *argv[]) {
 
      /* Prepare for polling.  */
 
-    nfds = 2;
 
     fds[0].fd = STDIN_FILENO;       /* Console input */
     fds[0].events = POLLIN;
