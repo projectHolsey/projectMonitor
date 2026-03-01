@@ -182,7 +182,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     struct audit_rule_data *rule = audit_rule_create_data();
-    printf("size of rule : %d\n", sizeof(*rule));
+    printf("size of rule : %lu\n", sizeof(*rule));
 
     // Add an libaudit watcher to the file we're tracking
     if (audit_add_watch(&rule, ntptr->file_to_track) < 0 ){
@@ -203,6 +203,8 @@ int main(int argc, char *argv[]) {
     
 
      /* Prepare for polling.  */
+
+    nfds = 2;
 
 
     fds[0].fd = STDIN_FILENO;       /* Console input */

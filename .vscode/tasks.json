@@ -4,7 +4,7 @@
 		{
 			"type": "shell",
 			"label": "gcc build and compile",
-			"command": "gcc main.c -o build/main && ./build/main",
+			"command": "gcc main.c -o build/main -laudit && sudo ./build/main -f testfile.txt",
 			"group": {
 				"kind": "build",
 				"isDefault": true
