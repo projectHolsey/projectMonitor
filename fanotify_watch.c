@@ -27,6 +27,94 @@ static void print_path_from_fd(int fd)
     }
 }
 
+void print_exe_from_pid(pid_t pid)
+{
+    char exe_path[64];
+    char resolved[PATH_MAX];
+
+    snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
+
+    ssize_t len = readlink(exe_path, resolved, sizeof(resolved) - 1);
+    if (len != -1) {
+        resolved[len] = '\0';
+        printf("Executable: %s\n", resolved);
+    } else {
+        printf("Executable: [unknown]\n");
+    }
+
+}
+
+
+
+void print_cmdline_from_pid(pid_t pid)
+{
+    char cmd_path[64];
+    char buffer[4096];
+
+    char parentPid[64];
+
+    snprintf(cmd_path, sizeof(cmd_path), "/proc/%d/cmdline", pid);
+
+    FILE *f = fopen(cmd_path, "r");
+    if (!f) {
+        printf("Cmdline: [unavailable]\n");
+        return;
+    }
+
+    size_t len = fread(buffer, 1, sizeof(buffer) - 1, f);
+    fclose(f);
+
+    if (len > 0) {
+        buffer[len] = '\0';
+
+        /* cmdline is null-separated */
+        for (size_t i = 0; i < len; i++) {
+            if (buffer[i] == '\0')
+                buffer[i] = ' ';
+        }
+
+        printf("Cmdline: %s\n", buffer);
+    } else {
+        printf("Cmdline: [empty]\n");
+    }
+
+
+    // checking to see if there's a parent process
+    snprintf(parentPid, sizeof(parentPid), "/proc/%d/status", pid);
+
+    FILE *ftwo = fopen(parentPid, "r");
+    if (!ftwo) {
+        printf("Parent process ID: [unavailable]\n");
+        return;
+    }
+
+    len = fread(buffer, 1, sizeof(buffer) - 1, ftwo);
+    fclose(ftwo);
+
+    if (len > 0) {
+        buffer[len] = '\0';
+
+        /* cmdline is null-separated */
+        for (size_t i = 0; i < len; i++) {
+            if (buffer[i] == '\0')
+                buffer[i] = ' ';
+        }
+
+        // split into lines
+        char *token = strtok(buffer, "\n");
+
+        while(token != NULL) {
+            if (strstr(token, "PPid")){
+                printf("%s\n", token);
+
+            }
+            token = strtok(NULL, "\n"); // get next token
+        }
+    } else {
+        printf("Cmdline: [empty]\n");
+    }
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 2) {
@@ -84,6 +172,8 @@ int main(int argc, char *argv[])
 
             printf("Event detected\n");
             printf("PID: %d\n", metadata->pid);
+            print_exe_from_pid(metadata->pid);
+            print_cmdline_from_pid(metadata->pid);
 
             if (metadata->mask & FAN_OPEN)
                 printf("Event: OPEN\n");
@@ -103,4 +193,20 @@ int main(int argc, char *argv[])
 
     close(fan_fd);
     return EXIT_SUCCESS;
-}
+} 
+
+
+/**
+ * 
+ * Some instructions on compilation, just incase I forget
+ * 
+ * #Compille
+ * gcc fanotify_watch.c -o fanotify_watch
+ * 
+ * # run
+ * sudo ./fanotify_watch testfile.txt
+ * 
+ * 
+ * A working result will print a bunch of data about the process that is changing the target file
+ * and also the parent process if this is found.
+ */

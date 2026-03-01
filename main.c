@@ -195,8 +195,9 @@ int main(int argc, char *argv[]) {
 
      // install the rule in kernel audit
     if (audit_add_rule_data(audit_fd, rule, 8, 2) < 0) {
+        printf("auditfd : %d1", audit_fd);
         perror("audit_add_rule_data");
-        printf("errno=%d\n", errno);
+        // printf("errno=%d\n", errno);
         return 1;
     }
 
