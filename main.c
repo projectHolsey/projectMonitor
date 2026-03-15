@@ -11,6 +11,10 @@
 
 #define BUF_SIZE 8192
 
+
+
+
+
 static void print_path_from_fd(int fd)
 {
     char path[PATH_MAX];
@@ -117,9 +121,21 @@ void print_cmdline_from_pid(pid_t pid)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+
+    char logFile[512];
+
+    if (argc < 2) {
+        fprintf(stderr, "Minimal usage: %s <file>\n", argv[0]);
         return EXIT_FAILURE;
+    }
+
+    int i = 0;
+    while (argv[i] != NULL){
+        if (strstr(argv[i], "-o")) {
+            // output logs to another file
+            strcpy(logFile, argv[++i]);
+        }
+        i++;
     }
 
     const char *path = argv[1];
@@ -148,8 +164,20 @@ int main(int argc, char *argv[])
     char fileData[2048];
     FILE* tmpFile = fopen(path, "r"); // Going to keep the file open so we can read from it.. hopefully this doesn't cause a loop...
     if (!(tmpFile == NULL)){
-        while (fgets(fileData, sizeof(fileData), tmpFile) != NULL) {
-            printf("%s", fileData); // Print the line
+        while (fgets(fileData, sizeof(fileData), tmpFile) != NULL) { 
+            if (logFile == NULL || logFile[0] == '\0')
+                printf("%s", fileData); // Print the line
+            else {
+                FILE *logFilePtr = fopen(logFile, "a");
+                if (!(logFilePtr == NULL)){
+                    char output[4096];
+                    snprintf(output, sizeof(output), "original contents:'\n%s", fileData);
+                    fputs(output, logFilePtr);
+                    // logged contents to output file
+                    fclose(logFilePtr);
+                }
+
+            } 
         }
     }
     fclose(tmpFile);
@@ -197,7 +225,21 @@ int main(int argc, char *argv[])
                 tmpFile = fopen(path, "r"); // Going to keep the file open so we can read from it.. hopefully this doesn't cause a loop...
                 if (!(tmpFile == NULL)){
                     while (fgets(fileData, sizeof(fileData), tmpFile) != NULL) {
-                        printf("%s", fileData); // Print the line
+                        if (logFile == NULL || logFile[0] == '\0') // checking if we need to log to file or not
+                            printf("%s", fileData); // Print the line
+                        else {
+                            FILE *logFilePtr = fopen(logFile, "a");
+                            if (!(logFilePtr == NULL)){
+                                
+                                char output[4096];
+                                snprintf(output, sizeof(output), "New contents:'\n%s", fileData);
+                                printf("Writing this to file:%s\n", output);
+                                fputs(output, logFilePtr);
+                                // logged contents to output file
+                                fclose(logFilePtr);
+                            }
+
+                        } 
                     }
                 }
             }
