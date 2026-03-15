@@ -1,335 +1,230 @@
-
+#define _GNU_SOURCE
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-
-#include <errno.h>
 #include <unistd.h>
-#include <poll.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/fanotify.h>
+#include <sys/stat.h>
 
-#include <stdarg.h>
+#define BUF_SIZE 8192
 
-#include <sys/inotify.h> // system library to watch the file for changes
+static void print_path_from_fd(int fd)
+{
+    char path[PATH_MAX];
+    char proc_path[64];
 
-#include <libaudit.h>
-#include <sys/select.h>
+    snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%d", fd);
 
-
-#define BUF_LEN (10 * (sizeof(struct inotify_event) + NAME_MAX + 1))
-
-const char *STANDARD_LOGFILE_NAME = "projectMonitorOut.txt";
-
-
-// Storing current file tracker information
-struct trackerEnum {
-    
-    char file_to_track[1024];
-    char log_file_out[1024];
-    
-};
-
-typedef struct trackerEnum FTracker;
-
-
-
-// prototype declarations
-int checkValidFileIn(int argc, char *argv[], FTracker *newTracker);
-
-/* Read all available inotify events from the file descriptor 'fd'.
-    wd is the table of watch descriptors for the directories in argv.
-    argc is the size of wd and argv.
-    argv is the list of watched directories.
-    Entry 0 of wd and argv is unused.  */
-
-static void handle_events(int fd, int *wd, int argc, char* argv[]) {
-    /* Some systems cannot read integer variables if they are not
-        properly aligned.  On other systems, incorrect alignment may
-        decrease performance.  Hence, the buffer used for reading from
-        the inotify file descriptor should have the same alignment as
-        struct inotify_event.  */
-
-    char buf[4096]
-        __attribute__ ((aligned(__alignof__(struct inotify_event))));
-    const struct inotify_event *event;
-    ssize_t size;
-
-    /* Loop while events can be read from inotify file descriptor.  */
-
-    for (;;) {
-
-        /* Read some events.  */
-
-        size = read(fd, buf, sizeof(buf));
-        if (size == -1 && errno != EAGAIN) {
-            perror("read");
-            exit(EXIT_FAILURE);
-        }
-
-        /* If the nonblocking read() found no events to read, then
-            it returns -1 with errno set to EAGAIN.  In that case,
-            we exit the loop.  */
-
-        if (size <= 0)
-            break;
-
-        /* Loop over all events in the buffer.  */
-
-        for (char *ptr = buf; ptr < buf + size;
-                ptr += sizeof(struct inotify_event) + event->len) {
-
-            event = (const struct inotify_event *) ptr;
-
-            /* Print event type.  */
-
-            if (event->mask & IN_OPEN)
-                printf("IN_OPEN: ");
-            if (event->mask & IN_CLOSE_NOWRITE)
-                printf("IN_CLOSE_NOWRITE: ");
-            if (event->mask & IN_CLOSE_WRITE)
-                printf("IN_CLOSE_WRITE: ");
-            if (event->mask & IN_MODIFY)
-                printf("IN_MODIFY: ");
-            if (event->mask & IN_ACCESS)
-                printf("IN_ACCESS: ");
-
-            /* Print the name of the watched directory.  */
-
-            for (size_t i = 1; i < argc; ++i) {
-                if (wd[i] == event->wd) {
-                    printf("%s/", argv[i]);
-                    break;
-                }
-            }
-
-            /* Print the name of the file.  */
-
-            if (event->len)
-                printf("%s", event->name);
-
-            /* Print type of filesystem object.  */
-
-            if (event->mask & IN_ISDIR)
-                printf(" [directory]\n");
-            else
-                printf(" [file]\n");
-        }
+    ssize_t len = readlink(proc_path, path, sizeof(path) - 1);
+    if (len != -1) {
+        path[len] = '\0';
+        printf("Path: %s\n", path);
+    } else {
+        perror("readlink");
     }
 }
 
+void print_exe_from_pid(pid_t pid)
+{
+    char exe_path[64];
+    char resolved[PATH_MAX];
 
-int main(int argc, char *argv[]) {
+    snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
 
-    /**
-     * Main
-     * 
-     * Arguments:
-     *  -f for new file to watch
-     *  -o for log to output this too // defaults to the standard log out 
-     */
-
-
-    char file_to_track[1024];
-    int found = 0;
-    
-    FTracker newTracker;
-    FTracker *ntptr = &newTracker;
-    struct inotify_event *event;
-
-    char buf;
-    int fd; // file descriptor 
-    int i;
-    int poll_num;
-    int *wd;
-    nfds_t nfds;
-    struct pollfd fds[2];
-
-    // Creating the file descriptor for accessing inotify api
-    fd = inotify_init1(IN_NONBLOCK);
-    if (fd == -1) {
-        perror("inotify_init1");
-        exit(EXIT_FAILURE);
+    ssize_t len = readlink(exe_path, resolved, sizeof(resolved) - 1);
+    if (len != -1) {
+        resolved[len] = '\0';
+        printf("Executable: %s\n", resolved);
+    } else {
+        printf("Executable: [unknown]\n");
     }
 
-    /* Allocate memory for watch descriptors.  */
-    wd = calloc(argc, sizeof(int));
-    if (wd == NULL) {
-        perror("calloc");
-        exit(EXIT_FAILURE);
+}
+
+
+
+void print_cmdline_from_pid(pid_t pid)
+{
+    char cmd_path[64];
+    char buffer[4096];
+
+    char parentPid[64];
+
+    snprintf(cmd_path, sizeof(cmd_path), "/proc/%d/cmdline", pid);
+
+    FILE *f = fopen(cmd_path, "r");
+    if (!f) {
+        printf("Cmdline: [unavailable]\n");
+        return;
     }
 
+    size_t len = fread(buffer, 1, sizeof(buffer) - 1, f);
+    fclose(f);
 
-    printf("Starting file\n");
-    printf("Found %d arguments\n", argc);
+    if (len > 0) {
+        buffer[len] = '\0';
 
-    if (checkValidFileIn(argc, argv, ntptr) == 1) {
-        return 1;
-    }
+        /* cmdline is null-separated */
+        for (size_t i = 0; i < len; i++) {
+            if (buffer[i] == '\0')
+                buffer[i] = ' ';
+        }
 
-    // Watch the new file
-    wd[i] = inotify_add_watch(fd, ntptr->file_to_track, IN_OPEN | IN_CLOSE | IN_ACCESS | IN_MODIFY);
-    
-
-    // Checking the watcher started correctly
-    if (wd[i] == -1) {
-        fprintf(stderr, "Cannot watch '%s': %s\n", ntptr->file_to_track, strerror(errno));
-        exit(EXIT_FAILURE);
+        printf("Cmdline: %s\n", buffer);
+    } else {
+        printf("Cmdline: [empty]\n");
     }
 
 
-    int audit_fd = audit_open();
-    if (audit_fd < 0) {
-        perror("audit_open");
-        return 1;
-    }
-    struct audit_rule_data *rule = audit_rule_create_data();
-    printf("size of rule : %lu\n", sizeof(*rule));
+    // checking to see if there's a parent process
+    snprintf(parentPid, sizeof(parentPid), "/proc/%d/status", pid);
 
-    // Add an libaudit watcher to the file we're tracking
-    if (audit_add_watch(&rule, ntptr->file_to_track) < 0 ){
-        perror("audit_add_watch");
-        return 1;
+    FILE *ftwo = fopen(parentPid, "r");
+    if (!ftwo) {
+        printf("Parent process ID: [unavailable]\n");
+        return;
     }
 
-    /* Set permissions (like -p wa) */
-    audit_update_watch_perms(rule, AUDIT_PERM_READ | AUDIT_PERM_WRITE | AUDIT_PERM_ATTR);
+    len = fread(buffer, 1, sizeof(buffer) - 1, ftwo);
+    fclose(ftwo);
 
-     // install the rule in kernel audit
-    if (audit_add_rule_data(audit_fd, rule, 8, 2) < 0) {
-        printf("auditfd : %d1", audit_fd);
-        perror("audit_add_rule_data");
-        // printf("errno=%d\n", errno);
-        return 1;
+    if (len > 0) {
+        buffer[len] = '\0';
+
+        /* cmdline is null-separated */
+        for (size_t i = 0; i < len; i++) {
+            if (buffer[i] == '\0')
+                buffer[i] = ' ';
+        }
+
+        // split into lines
+        char *token = strtok(buffer, "\n");
+
+        while(token != NULL) {
+            if (strstr(token, "PPid")){
+                printf("%s\n", token);
+
+            }
+            token = strtok(NULL, "\n"); // get next token
+        }
+    } else {
+        printf("Cmdline: [empty]\n");
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        return EXIT_FAILURE;
     }
 
-    
+    const char *path = argv[1];
 
-     /* Prepare for polling.  */
+    /* Initialize fanotify in notification mode (no permission events) */
+    int fan_fd = fanotify_init(FAN_CLASS_NOTIF | FAN_CLOEXEC,
+                               O_RDONLY | O_LARGEFILE);
+    if (fan_fd == -1) {
+        perror("fanotify_init");
+        return EXIT_FAILURE;
+    }
 
-    nfds = 2;
+    /* Add mark for the specific file */
+    if (fanotify_mark(fan_fd,
+                      FAN_MARK_ADD,
+                      FAN_OPEN | FAN_CLOSE_WRITE | FAN_MODIFY,
+                      AT_FDCWD,
+                      path) == -1) {
+        perror("fanotify_mark");
+        close(fan_fd);
+        return EXIT_FAILURE;
+    }
 
+    printf("Watching %s ...\n", path);
 
-    fds[0].fd = STDIN_FILENO;       /* Console input */
-    fds[0].events = POLLIN;
+    char fileData[2048];
+    FILE* tmpFile = fopen(path, "r"); // Going to keep the file open so we can read from it.. hopefully this doesn't cause a loop...
+    if (!(tmpFile == NULL)){
+        while (fgets(fileData, sizeof(fileData), tmpFile) != NULL) {
+            printf("%s", fileData); // Print the line
+        }
+    }
+    fclose(tmpFile);
 
-    fds[1].fd = fd;                 /* Inotify input */
-    fds[1].events = POLLIN;
+    char buffer[BUF_SIZE];
 
-    /* Wait for events and/or terminal input.  */
-
-    printf("Listening for events.\n");
     while (1) {
-
-        // from /sys/select.h library
-        fd_set rfds;                // file descriptor struct
-        FD_ZERO(&rfds);             // clears it
-        FD_SET(audit_fd, &rfds);    // Watches our descriptor
-
-        poll_num = poll(fds, nfds, -1);
-        if (poll_num == -1) {
+        ssize_t len = read(fan_fd, buffer, sizeof(buffer));
+        if (len == -1) {
             if (errno == EINTR)
                 continue;
-            perror("poll");
-            exit(EXIT_FAILURE);
+            perror("read");
+            break;
         }
 
-        if (poll_num > 0) {
+        struct fanotify_event_metadata *metadata;
 
-            if (fds[0].revents & POLLIN) {
+        for (metadata = (struct fanotify_event_metadata *)buffer;
+             FAN_EVENT_OK(metadata, len);
+             metadata = FAN_EVENT_NEXT(metadata, len)) {
 
-                /* Console input is available.  Empty stdin and quit.  */
-
-                while (read(STDIN_FILENO, &buf, 1) > 0 && buf != '\n')
-                    continue;
-                break;
+            if (metadata->vers != FANOTIFY_METADATA_VERSION) {
+                fprintf(stderr, "Mismatch of fanotify metadata version\n");
+                exit(EXIT_FAILURE);
             }
-            
 
-            if (fds[1].revents & POLLIN) {
+            if (metadata->fd == FAN_NOFD)
+                continue;
 
-                /* Inotify events are available.  */
+            printf("Event detected\n");
+            printf("PID: %d\n", metadata->pid);
+            print_exe_from_pid(metadata->pid);
+            print_cmdline_from_pid(metadata->pid);
 
-                handle_events(fd, wd, argc, argv);
-
-                struct timeval tv = {5, 0};  // 5 seconds
-                // using the libaudit only after we found something from inotify
-                int ret = select(audit_fd + 1, &rfds, NULL, NULL, &tv); 
-                // Select is used instead of while, but there **should** already be something to read if inotify found something
-                    // the &tv is a 5 second timeout, just incase
-                if (ret < 0) {
-                    perror("select");
-                    break;
-                }
-                // Checking if the fil descriptor is ready
-                if (FD_ISSET(audit_fd, &rfds)) {
-                    struct audit_reply rep;
-                    // Getting the reply and printing the message
-                    int len = audit_get_reply(audit_fd, &rep, GET_REPLY_NONBLOCKING, 0);
-                    if (len > 0) {
-                        if (rep.type != AUDIT_EOE &&
-                            rep.type != AUDIT_PROCTITLE &&
-                            rep.type != AUDIT_PATH) {
-                            printf("Audit event: %s\n", rep.message);
-                        }
+            if (metadata->mask & FAN_OPEN)
+                printf("Event: OPEN\n");
+                
+            if (metadata->mask & FAN_MODIFY) {
+                printf("Event: MODIFY\n");
+                
+            }
+                
+            if (metadata->mask & FAN_CLOSE_WRITE) {
+                printf("Event: CLOSE_WRITE\n");
+                tmpFile = fopen(path, "r"); // Going to keep the file open so we can read from it.. hopefully this doesn't cause a loop...
+                if (!(tmpFile == NULL)){
+                    while (fgets(fileData, sizeof(fileData), tmpFile) != NULL) {
+                        printf("%s", fileData); // Print the line
                     }
                 }
-
             }
+
+            print_path_from_fd(metadata->fd);
+            printf("\n");
+
+            close(metadata->fd);
         }
     }
 
-
-    // Cleaning up the libaudit watcher
-    audit_close(audit_fd);
-    free(rule);
-    
-
-    return 0;
-}
+    close(fan_fd);
+    return EXIT_SUCCESS;
+} 
 
 
-int checkValidFileIn(int argc, char *argv[], FTracker *newTracker) {
-
-    int inotifyFd, wd, j;
-    size_t numRead;
-    FILE *newFile;
-    int found = 0;
-    
-
-    for (int i = 0 ; i < argc; i++) {
-        if (strcmp("-f", argv[i]) == 0) {
-            if (i + 1 == argc) {
-                printf("-f argument is missing a filename after it. Exiting\n");
-                return 1;
-            }
-            printf("Found -f, next arg is %s\n", argv[i+1]);
-            strcpy(newTracker->file_to_track, argv[i+1]);
-            found = 1; 
-        }
-    }
-
-    if (found == 0) {
-        printf("Program requires a -f file for input. Exiting.\n");
-        return 1;
-    }
-
-
-    // checking the file specified on the 
-    if (!(newFile = fopen(newTracker->file_to_track, "r"))) {
-
-        printf("Failed to open the file to track : \"%s\". Exiting\n", newTracker->file_to_track);
-
-        // closing the file on exit
-        // fclose(newFile);
-        return 1;
-        
-    }    
-    
-
-    // closing the file on exit
-    fclose(newFile);
-    
-
-    return 0; // VALID
-
-}
-
+/**
+ * 
+ * Some instructions on compilation, just incase I forget
+ * 
+ * #Compille
+ * gcc fanotify_watch.c -o fanotify_watch
+ * 
+ * # run
+ * sudo ./fanotify_watch testfile.txt
+ * 
+ * 
+ * A working result will print a bunch of data about the process that is changing the target file
+ * and also the parent process if this is found.
+ */
